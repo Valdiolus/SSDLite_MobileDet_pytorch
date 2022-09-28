@@ -14,7 +14,9 @@ import subprocess
 import os
 
 
-#tf 115
+#pytorch - main
+
+#tf_115
 #netron -b runs/tflite/best.tflite -p 6009 --host 192.168.0.235
 
 MODEL_FILE = "best"
@@ -33,7 +35,7 @@ batch_size = 1
 channels = 3
 height = 320
 width = 320
-int8 = False
+int8 = True
 nms=False
 
 
@@ -125,7 +127,7 @@ def representative_data_gen():
         yield [input_value]
 
 def export_onnx_opt_openvino_tflite():
-    #model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V2)
+   #model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V2)
 
     #model = torchvision.models.detection.ssdlite320_mobilenet_v3_large(weights=torchvision.models.detection.ssdlite.SSDLite320_MobileNet_V3_Large_Weights)
 
@@ -134,6 +136,7 @@ def export_onnx_opt_openvino_tflite():
     #model = torchvision.models.mobilenet_v3_large(weights=torchvision.models.MobileNet_V3_Large_Weights.IMAGENET1K_V2)
 
     model = mobiledet.MobileDetTPU("classifier", 1000)
+    #model.load_state_dict(torch.load(MODEL_PATH))
     #print(model)
 
     sample_input = torch.rand((batch_size, channels, height, width))
@@ -172,10 +175,11 @@ def export_onnx_opt_openvino_tflite():
         #dataset = LoadImages(check_dataset(data)['train'], img_size=imgsz, auto=False)  # representative data
         converter.representative_dataset = representative_data_gen
         converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        converter.target_spec.supported_types = []
+        converter.target_spec.supported_types = [tf.int8]
         converter.inference_input_type = tf.uint8  # or tf.int8
         converter.inference_output_type = tf.uint8  # or tf.int8
-        converter.experimental_new_quantizer = True
+        converter.experimental_new_quantizer = True # was True
+        #converter.allow_custom_ops = True
     if nms:
         converter.target_spec.supported_ops.append(tf.lite.OpsSet.SELECT_TF_OPS)
 
@@ -186,7 +190,7 @@ def export_onnx_opt_openvino_tflite():
         f.write(tflite_model)
 
     #run edgetpu compiler
-    subprocess.run(["edgetpu_compiler", TFLITE_PATH, "-o", TFLITE_FOLDER])
+    subprocess.run(["edgetpu_compiler", TFLITE_PATH, "-o", TFLITE_FOLDER, "-s"])
 
 
 export_onnx_opt_openvino_tflite()

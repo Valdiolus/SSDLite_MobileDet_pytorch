@@ -13,13 +13,16 @@ import matplotlib.pyplot as plt
 import time
 import mobiledet
 
+from torchsummary import summary
+
 # CUDA_VISIBLE_DEVICES="" for CPU run
 
 imagenet_dir = '/media/valdis/NVME/datasets/imagenet/ILSVRC/Data/CLS-LOC'
 batch_size = 128
 workers = 8
-EPOCHS = 100
+EPOCHS = 1
 n_classes = 1000
+input_size = 320
 PATH_TO_SAVE = './runs'
 
 def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):  
@@ -45,6 +48,7 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
             running_corrects = 0
             processed_data = 0
             #for inputs, labels in dataloader:
+            iter = 0
             for data in tqdm(dataloaders[phase], leave=False, desc=f"{phase} iter"):
                 inputs, labels = data
 
@@ -71,6 +75,10 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
                 processed_data += inputs.size(0)
+                iter += 1
+                #if iter % 100 == 0:
+                    #torch.save(model.state_dict(), PATH_TO_SAVE+"/tmp.pt")
+                    #exit(0)
             
             if phase == 'train':
                 scheduler.step()
@@ -96,12 +104,6 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
     print('Best val Acc: {:4f}'.format(best_acc))
 
 
-
-    
-
-
-
-
 #Check if GPU is enable
 if torch.cuda.is_available():
     print('CUDA is available!  Training on GPU ...')
@@ -118,7 +120,7 @@ else:
 
 #Loading dataset - like Imagenet, where 1k folders with each classes
 data_transforms = transforms.Compose([
-    transforms.Resize((224,224)),
+    transforms.Resize((input_size,input_size)),
     transforms.ToTensor()
     ])
 imagenet_data = {x: torchvision.datasets.ImageFolder(os.path.join(imagenet_dir, x), transform=data_transforms)
@@ -133,9 +135,11 @@ train_features, train_labels = next(iter(data_loaders['train']))
 
 #Configurate model and hyperparameters
 num_features = 1280
-#model = mobiledet.MobileDetTPU()
-model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V2)
-model.classifier = nn.Linear(num_features, n_classes)
+model = mobiledet.MobileDetTPU(net_type="classifier", classes=n_classes)
+#model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V2)
+#model.classifier = nn.Linear(num_features, n_classes)
+#summary(model.to(device), (3, input_size, input_size))
+print(model)
 
 optimizer = torch.optim.Adam(model.parameters())
 loss_fn = nn.CrossEntropyLoss()

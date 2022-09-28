@@ -1,0 +1,17 @@
+curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add –
+echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list
+sudo apt-get update
+sudo apt-get install edgetpu-compiler
+
+# tensorflow
+sudo pip3 install tensorflow==2.3.1 –upgrade 
+sudo pip3 install tensorflow_datasets
+
+# onnx
+sudo pip3 install onnx onnx_tf onnx-simplifier
+
+# openvino
+sudo pip3 install openvino-dev
+
+# openvino2tensorflow
+sudo pip3 install openvino2tensorflow --upgrade
