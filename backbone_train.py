@@ -19,13 +19,21 @@ from torchsummary import summary
 
 imagenet_dir = '/media/valdis/NVME/datasets/imagenet/ILSVRC/Data/CLS-LOC'
 batch_size = 128
-workers = 8
+workers = 4
 EPOCHS = 1
 n_classes = 1000
 input_size = 320
 PATH_TO_SAVE = './runs'
 
 def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):  
+    #count the current date and time
+    time_struct = time.gmtime()
+    time_now = str(time_struct.tm_year)+'-'+str(time_struct.tm_mon)+'-'+str(time_struct.tm_mday)+'_'+str(time_struct.tm_hour+3)+'-'+str(time_struct.tm_min)+'-'+str(time_struct.tm_sec)
+    print(time_now)
+    train_path = os.path.join(PATH_TO_SAVE, time_now)
+    if not os.path.exists(train_path):
+        os.makedirs(train_path)
+    
     model.to(device)  
     #print(model)
 
@@ -47,41 +55,66 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
             running_loss = 0.0
             running_corrects = 0
             processed_data = 0
+            iter_top1 = 0
+            iter_top5 = 0
+            correct_top5 = 0
+            correct_top1 = 0
             #for inputs, labels in dataloader:
             iter = 0
-            for data in tqdm(dataloaders[phase], leave=False, desc=f"{phase} iter"):
-                inputs, labels = data
+            with tqdm(dataloaders[phase], leave=False, desc=f"{phase} iter") as tepoch:
+                tepoch.set_description(f"Epoch {epoch+1}/{num_epochs}, {phase} iter")
+                for data in tepoch:
+                    inputs, labels = data
 
-                if train_on_gpu:
-                    inputs = inputs.to(device)
-                    labels = labels.to(device)
- 
-                if phase == "train":
-                    optimizer.zero_grad()
+                    if train_on_gpu:
+                        inputs = inputs.to(device)
+                        labels = labels.to(device)
+    
+                    if phase == "train":
+                        optimizer.zero_grad()
 
-                if phase == "train":
-                    outputs = model(inputs)
-                else:
-                   with torch.no_grad():
-                        outputs = model(inputs)                   
-                
-                loss = loss_fn(outputs, labels)
-                preds = torch.argmax(outputs, 1)
+                    if phase == "train":
+                        outputs = model(inputs)
+                    else:
+                        with torch.no_grad():
+                                outputs = model(inputs)                   
+                    
+                    loss = loss_fn(outputs, labels)
+                    preds = torch.argmax(outputs, 1)
 
-                if phase == "train":
-                    loss.backward()
-                    optimizer.step()
-                
-                running_loss += loss.item() * inputs.size(0)
-                running_corrects += torch.sum(preds == labels.data)
-                processed_data += inputs.size(0)
-                iter += 1
-                #if iter % 100 == 0:
-                    #torch.save(model.state_dict(), PATH_TO_SAVE+"/tmp.pt")
-                    #exit(0)
-            
-            if phase == 'train':
-                scheduler.step()
+                    #calculate 
+                    if phase == "train":
+                        loss.backward()
+                        optimizer.step()
+                    
+                        running_loss += loss.item() * inputs.size(0)
+                        running_corrects += torch.sum(preds == labels.data)
+                        processed_data += inputs.size(0)
+
+                        iter += 1
+                        #if iter % 100 == 0:
+                        #    torch.save(model.state_dict(), os.path.join(train_path, "tmp.pt"))
+                            #exit(0)
+                        tepoch.set_postfix(loss=loss.item(), accuracy=(running_corrects/(batch_size*iter)).item())
+                    if phase == "val":
+                        iter_top1 = 0
+                        iter_top5 = 0
+
+                        iter_top1 += torch.sum(preds == labels.data)
+                        iter_top5 += iter_top1
+
+                        for _ in range(4):
+                            for i in range(inputs.size(0)):
+                                outputs[i,preds[i]] = -1000
+                            preds = torch.argmax(outputs, 1)
+                            iter_top5 += torch.sum(preds == labels.data)
+                        
+                        processed_data += inputs.size(0)
+                        correct_top1 += iter_top1
+                        correct_top5 += iter_top5
+                        running_loss += loss.item() * inputs.size(0)
+
+                        tepoch.set_postfix(top1=(correct_top1 / processed_data).item(), top5=(correct_top5 / processed_data).item())
 
             epoch_loss = running_loss / dataset_sizes[phase]
             epoch_acc = running_corrects / dataset_sizes[phase]
@@ -89,19 +122,25 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
             losses[phase].append(epoch_loss)
             accuracy[phase].append(epoch_acc)
 
+            if phase == 'train':
+                scheduler.step()
+                
             if phase == 'val':
-                torch.save(model.state_dict(), PATH_TO_SAVE+"/last.pt")
+                correct_top1 = correct_top1.item() / processed_data
+                correct_top5 = correct_top5.item() / processed_data
+                torch.save(model.state_dict(), os.path.join(train_path, "last.pt"))
                 if epoch_acc > best_acc:
                     best_acc = epoch_acc
-                    torch.save(model.state_dict(), PATH_TO_SAVE+"/best.pt")
+                    torch.save(model.state_dict(), os.path.join(train_path, "best.pt"))
 
         #Print log each epoch
         print("\nEpoch %s/%s" % (epoch+1, num_epochs), "train acc", "{:.4f}".format(accuracy['train'][epoch]), "train loss", "{:.4f}".format(losses['train'][epoch]), 
-                                                       "val acc", "{:.4f}".format(accuracy['val'][epoch]), "val loss", "{:.4f}".format((losses['val'][epoch])))
+                                                       "val loss", "{:.4f}".format((losses['val'][epoch])), "val top5:", correct_top5, "val top1:", correct_top1)
     
     time_elapsed = time.time() - time_beginning
     print('Training complete in {:.0f}h {:.0f}m {:.0f}s'.format(time_elapsed // 3600, time_elapsed // 60, time_elapsed % 60))
     print('Best val Acc: {:4f}'.format(best_acc))
+    print("Final top5:", correct_top5, "top1:", correct_top1)
 
 
 #Check if GPU is enable
@@ -134,12 +173,14 @@ train_features, train_labels = next(iter(data_loaders['train']))
 
 
 #Configurate model and hyperparameters
-num_features = 1280
+
 model = mobiledet.MobileDetTPU(net_type="classifier", classes=n_classes)
+
 #model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V2)
-#model.classifier = nn.Linear(num_features, n_classes)
+#model.classifier = nn.Linear(1280, n_classes)
+
 #summary(model.to(device), (3, input_size, input_size))
-print(model)
+#print(model)
 
 optimizer = torch.optim.Adam(model.parameters())
 loss_fn = nn.CrossEntropyLoss()
