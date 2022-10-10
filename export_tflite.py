@@ -19,7 +19,7 @@ import os
 #tf_115
 #netron -b runs/tflite/best.tflite -p 6009 --host 192.168.0.235
 
-MODEL_FILE = "best"
+MODEL_FILE = "tmp"
 TFLITE_FOLDER = "./runs/tflite/"
 
 MODEL_PATH = "./runs/" + MODEL_FILE + ".pt"
@@ -37,6 +37,9 @@ height = 320
 width = 320
 int8 = True
 nms=False
+
+classifier = 1
+detector = 0
 
 
 def export_onnx_saved_model_tflite_old():
@@ -135,7 +138,7 @@ def export_onnx_opt_openvino_tflite():
 
     #model = torchvision.models.mobilenet_v3_large(weights=torchvision.models.MobileNet_V3_Large_Weights.IMAGENET1K_V2)
 
-    model = mobiledet.MobileDetTPU("classifier", 1000)
+    model = mobiledet.MobileDetTPU("detector", 6)
     #model.load_state_dict(torch.load(MODEL_PATH))
     #print(model)
 
@@ -150,11 +153,11 @@ def export_onnx_opt_openvino_tflite():
         model,                  # PyTorch Model
         sample_input,                    # Input tensor
         ONNX_PATH,        # Output file (eg. 'output_model.onnx')
-        opset_version=12,       # Operator support version 11-12 the best!!!
+        opset_version=11,       # Operator support version 11-12 the best!!!
         training=torch.onnx.TrainingMode.TRAINING if train else torch.onnx.TrainingMode.EVAL,
         input_names=['input'],   # Input tensor name (arbitary)
         output_names=['output'], # Output tensor name (arbitary)
-        do_constant_folding = True
+        do_constant_folding = False
         )
 
     #sudo python3 -m onnxsim runs/best.onnx runs/best_opt.onnx
@@ -167,24 +170,46 @@ def export_onnx_opt_openvino_tflite():
     subprocess.run(["openvino2tensorflow", "--model_path", MO_PATH_XML, "--model_output_path", TF_PATH, "--output_saved_model"])
 
     #convert uint8
-    converter = tf.lite.TFLiteConverter.from_saved_model(TF_PATH)
-    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
-    #converter.target_spec.supported_types = [tf.float16]
-    converter.optimizations = [tf.lite.Optimize.DEFAULT]
-    if int8:
-        #dataset = LoadImages(check_dataset(data)['train'], img_size=imgsz, auto=False)  # representative data
-        converter.representative_dataset = representative_data_gen
-        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
-        converter.target_spec.supported_types = [tf.int8]
-        converter.inference_input_type = tf.uint8  # or tf.int8
-        converter.inference_output_type = tf.uint8  # or tf.int8
-        converter.experimental_new_quantizer = True # was True
-        #converter.allow_custom_ops = True
-    if nms:
-        converter.target_spec.supported_ops.append(tf.lite.OpsSet.SELECT_TF_OPS)
 
-    tflite_model = converter.convert()
+    if classifier:
+        converter = tf.lite.TFLiteConverter.from_saved_model(TF_PATH)
+        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
+        #converter.target_spec.supported_types = [tf.float16]
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+        if int8:
+            #dataset = LoadImages(check_dataset(data)['train'], img_size=imgsz, auto=False)  # representative data
+            converter.representative_dataset = representative_data_gen
+            converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+            converter.target_spec.supported_types = [tf.int8]
+            converter.inference_input_type = tf.uint8  # or tf.int8
+            converter.inference_output_type = tf.uint8  # or tf.int8
+            converter.experimental_new_quantizer = True # was True
+            #converter.input_arrays = "input"
+            #converter.output_arrays = "Identity"
+            converter.allow_custom_ops = True
+        if nms:
+            converter.target_spec.supported_ops.append(tf.lite.OpsSet.SELECT_TF_OPS)
 
+        tflite_model = converter.convert()
+    
+    if detector:
+        converter = tf.lite.TFLiteConverter.from_saved_model(TF_PATH)
+        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
+        #converter.target_spec.supported_types = [tf.float16]
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
+
+        if int8:
+            #dataset = LoadImages(check_dataset(data)['train'], img_size=imgsz, auto=False)  # representative data
+            converter.representative_dataset = representative_data_gen
+            converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+            converter.target_spec.supported_types = [tf.int8]
+            converter.inference_input_type = tf.uint8  # or tf.int8
+            converter.inference_output_type = tf.uint8  # or tf.int8
+            converter.experimental_new_quantizer = True # was True
+            converter.allow_custom_ops = True
+            converter.input_arrays = "normalized_input_image_tensor"
+            converter.output_arrays = "TFLite_Detection_PostProcess,TFLite_Detection_PostProcess:1,TFLite_Detection_PostProcess:2,TFLite_Detection_PostProcess:3"
+        tflite_model = converter.convert()
     # Save the model
     with open(TFLITE_PATH, 'wb') as f:
         f.write(tflite_model)

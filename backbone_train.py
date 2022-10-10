@@ -30,7 +30,7 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
     time_struct = time.gmtime()
     time_now = str(time_struct.tm_year)+'-'+str(time_struct.tm_mon)+'-'+str(time_struct.tm_mday)+'_'+str(time_struct.tm_hour+3)+'-'+str(time_struct.tm_min)+'-'+str(time_struct.tm_sec)
     print(time_now)
-    train_path = os.path.join(PATH_TO_SAVE, time_now)
+    train_path = PATH_TO_SAVE#os.path.join(PATH_TO_SAVE, time_now)
     if not os.path.exists(train_path):
         os.makedirs(train_path)
     
@@ -92,9 +92,9 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
                         processed_data += inputs.size(0)
 
                         iter += 1
-                        #if iter % 100 == 0:
-                        #    torch.save(model.state_dict(), os.path.join(train_path, "tmp.pt"))
-                            #exit(0)
+                        if iter % 10 == 0:
+                            torch.save(model.state_dict(), os.path.join(train_path, "tmp.pt"))
+                            exit(0)
                         tepoch.set_postfix(loss=loss.item(), accuracy=(running_corrects/(batch_size*iter)).item())
                     if phase == "val":
                         iter_top1 = 0
