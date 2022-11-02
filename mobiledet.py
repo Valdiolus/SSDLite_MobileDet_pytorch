@@ -1,5 +1,3 @@
-from timm.models.efficientnet_blocks import *
-from tucker_conv.conv import TuckerConv
 import torch.nn as nn
 import torch
 
@@ -244,4 +242,3 @@ class MobileDetTPU(nn.Module):
             #x100 = self.flat(x100)
             #x100 = self.fc1(x100)
             return x100
-            #return x23,x28,x29,x30,x31,x32

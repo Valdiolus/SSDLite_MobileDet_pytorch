@@ -7,8 +7,8 @@ CLASSES = ["person", "car", "bicycle", "motorcycle", "bus", "truck"]
 
 CLASSES_DICTIONARY = {"person":0, "car":1, "bicycle":2, "motorcycle":3, "bus":4, "truck":5}
 
-DATASET_DATA_DIRS = ["/media/valdis/NVME/datasets/coco6/val"]#["/media/valdis/NVME/datasets/VOC2012/train", "/media/valdis/NVME/datasets/coco6/train", "/media/valdis/NVME/datasets/bdd100k/train", "/media/valdis/NVME/datasets/rwc/rwc_combined/first_05_02/train"]#["/media/valdis/MD/datasets/VOC2012/train", "/media/valdis/MD/datasets/coco6/train", "/media/valdis/MD/datasets/bdd100k/train", "/media/valdis/MD/datasets/rwc/rwc_combined/first_05_02/train"] # "/media/valdis/MD/datasets/VOC2012/train", "/media/valdis/MD/datasets/coco6/train", "/media/valdis/MD/datasets/bdd100k/train", 
-DATASET_LABELS_DIRS = ["/media/valdis/NVME/datasets/coco6/val/labels_filtered.json"]#["/media/valdis/NVME/datasets/VOC2012/train/labels_filtered.json", "/media/valdis/NVME/datasets/coco6/train/labels_filtered.json","/media/valdis/NVME/datasets/bdd100k/train/labels_filtered.json", "/media/valdis/NVME/datasets/rwc/rwc_combined/first_05_02/train/labels_filtered.json"] # "/media/valdis/MD/datasets/VOC2012/train/labels_filtered.json", "/media/valdis/MD/datasets/coco6/train/labels_filtered.json", "/media/valdis/MD/datasets/bdd100k/train/labels_filtered.json", 
+DATASET_DATA_DIRS = ["/Users/valdis/datasets/coco6/val", "/Users/valdis/datasets/coco6/train"]#["/media/valdis/NVME/datasets/VOC2012/train", "/media/valdis/NVME/datasets/coco6/train", "/media/valdis/NVME/datasets/bdd100k/train", "/media/valdis/NVME/datasets/rwc/rwc_combined/first_05_02/train"]#["/media/valdis/MD/datasets/VOC2012/train", "/media/valdis/MD/datasets/coco6/train", "/media/valdis/MD/datasets/bdd100k/train", "/media/valdis/MD/datasets/rwc/rwc_combined/first_05_02/train"] # "/media/valdis/MD/datasets/VOC2012/train", "/media/valdis/MD/datasets/coco6/train", "/media/valdis/MD/datasets/bdd100k/train", 
+DATASET_LABELS_DIRS = ["/Users/valdis/datasets/coco6/val/labels_filtered.json", "/Users/valdis/datasets/coco6/train/labels_filtered.json"]#["/media/valdis/NVME/datasets/VOC2012/train/labels_filtered.json", "/media/valdis/NVME/datasets/coco6/train/labels_filtered.json","/media/valdis/NVME/datasets/bdd100k/train/labels_filtered.json", "/media/valdis/NVME/datasets/rwc/rwc_combined/first_05_02/train/labels_filtered.json"] # "/media/valdis/MD/datasets/VOC2012/train/labels_filtered.json", "/media/valdis/MD/datasets/coco6/train/labels_filtered.json", "/media/valdis/MD/datasets/bdd100k/train/labels_filtered.json", 
 
 #DATASET_TYPE = "train"
 
@@ -72,9 +72,9 @@ def from_coco():
                     det_bbox =  detection.bounding_box
                     bbox_width = det_bbox[2]
                     bbox_height = det_bbox[3]
-                    bbox_x0 = det_bbox[0]
-                    bbox_y0 = det_bbox[1]
-                    file.write("{} {} {} {} {}\n".format(CLASSES_DICTIONARY[detection.label], bbox_x0, bbox_y0, bbox_width, bbox_height))
+                    bbox_x_center = det_bbox[0] + bbox_width/2
+                    bbox_y_center = det_bbox[1] + bbox_height/2
+                    file.write("{} {} {} {} {}\n".format(CLASSES_DICTIONARY[detection.label], bbox_x_center, bbox_y_center, bbox_width, bbox_height))
                     #print(detection.label, detection.bounding_box)
                 
                 file.close()

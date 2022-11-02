@@ -17,7 +17,7 @@ from torchsummary import summary
 
 # CUDA_VISIBLE_DEVICES="" for CPU run
 
-imagenet_dir = '/media/valdis/NVME/datasets/imagenet/ILSVRC/Data/CLS-LOC'
+imagenet_dir = '/Users/valdis/datasets/imagenet/ILSVRC/Data/CLS-LOC'
 batch_size = 128
 workers = 4
 EPOCHS = 1
