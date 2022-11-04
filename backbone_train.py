@@ -18,9 +18,9 @@ from torchsummary import summary
 # CUDA_VISIBLE_DEVICES="" for CPU run
 
 imagenet_dir = '/Users/valdis/datasets/imagenet/ILSVRC/Data/CLS-LOC'
-batch_size = 128
+batch_size = 64
 workers = 4
-EPOCHS = 1
+EPOCHS = 150
 n_classes = 1000
 input_size = 320
 PATH_TO_SAVE = './runs'
@@ -30,7 +30,7 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
     time_struct = time.gmtime()
     time_now = str(time_struct.tm_year)+'-'+str(time_struct.tm_mon)+'-'+str(time_struct.tm_mday)+'_'+str(time_struct.tm_hour+3)+'-'+str(time_struct.tm_min)+'-'+str(time_struct.tm_sec)
     print(time_now)
-    train_path = PATH_TO_SAVE#os.path.join(PATH_TO_SAVE, time_now)
+    train_path = os.path.join(PATH_TO_SAVE, time_now)
     if not os.path.exists(train_path):
         os.makedirs(train_path)
     
@@ -92,9 +92,9 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
                         processed_data += inputs.size(0)
 
                         iter += 1
-                        if iter % 10 == 0:
-                            torch.save(model.state_dict(), os.path.join(train_path, "tmp.pt"))
-                            exit(0)
+                        #if iter % 10 == 0:
+                        #    torch.save(model.state_dict(), os.path.join(PATH_TO_SAVE, "tmp.pt"))
+                        #    exit(0)
                         tepoch.set_postfix(loss=loss.item(), accuracy=(running_corrects/(batch_size*iter)).item())
                     if phase == "val":
                         iter_top1 = 0
@@ -142,48 +142,49 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
     print('Best val Acc: {:4f}'.format(best_acc))
     print("Final top5:", correct_top5, "top1:", correct_top1)
 
-
-#Check if GPU is enable
-if torch.cuda.is_available():
-    print('CUDA is available!  Training on GPU ...')
-    train_on_gpu = True
-    device = torch.device("cuda")
-else:
-    if torch.backends.mps.is_available():
-        print('GPU on M1 MAC is available!  Training on GPU ...')
+if __name__ == '__main__':
+    #Check if GPU is enable
+    if torch.cuda.is_available():
+        print('CUDA is available!  Training on GPU ...')
         train_on_gpu = True
-        device = torch.device("mps")
+        device = torch.device("cuda")
     else:
-        print('CUDA and MPS are not available.  Training on CPU ...')
+        if torch.backends.mps.is_available():
+            print('GPU on M1 MAC is available!  Training on GPU ...')
+            train_on_gpu = True
+            device = torch.device("mps")
+        else:
+            print('CUDA and MPS are not available.  Training on CPU ...')
 
 
-#Loading dataset - like Imagenet, where 1k folders with each classes
-data_transforms = transforms.Compose([
-    transforms.Resize((input_size,input_size)),
-    transforms.ToTensor()
-    ])
-imagenet_data = {x: torchvision.datasets.ImageFolder(os.path.join(imagenet_dir, x), transform=data_transforms)
-                for x in ['train', 'val']}
-data_loaders = {x: torch.utils.data.DataLoader(imagenet_data[x], batch_size=batch_size, shuffle=True, num_workers=workers)
-                for x in ['train', 'val']}
-dataset_sizes = {x: len(imagenet_data[x]) for x in ['train', 'val']}
-class_names = imagenet_data['train'].classes
-print(dataset_sizes)
-train_features, train_labels = next(iter(data_loaders['train']))
+    #Loading dataset - like Imagenet, where 1k folders with each classes
+    data_transforms = transforms.Compose([
+        transforms.Resize((input_size,input_size)),
+        transforms.CenterCrop(298),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
+    imagenet_data = {x: torchvision.datasets.ImageFolder(os.path.join(imagenet_dir, x), transform=data_transforms)
+                    for x in ['train', 'val']}
+    data_loaders = {x: torch.utils.data.DataLoader(imagenet_data[x], batch_size=batch_size, shuffle=True, num_workers=workers)
+                    for x in ['train', 'val']}
+    dataset_sizes = {x: len(imagenet_data[x]) for x in ['train', 'val']}
+    class_names = imagenet_data['train'].classes
+    print(dataset_sizes)
+    train_features, train_labels = next(iter(data_loaders['train']))
 
 
-#Configurate model and hyperparameters
+    #Configurate model and hyperparameters
 
-model = mobiledet.MobileDetTPU(net_type="classifier", classes=n_classes)
+    model = mobiledet.MobileDetTPU(net_type="classifier", classes=n_classes)
 
-#model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V2)
-#model.classifier = nn.Linear(1280, n_classes)
+    #model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V2)
+    #model.classifier = nn.Linear(1280, n_classes)
 
-#summary(model.to(device), (3, input_size, input_size))
-#print(model)
+    #The optimal learning rate of the MobileNet-V2 model is 1.66 × 10 −3 - ???
+    #optimizer = torch.optim.Adam(model.parameters())
+    optimizer = torch.optim.SGD(model.parameters(), 0.05, momentum=0.9, weight_decay=0.00004)
+    loss_fn = nn.CrossEntropyLoss()
+    exp_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=int(len(imagenet_data['train'])/batch_size))
 
-optimizer = torch.optim.Adam(model.parameters())
-loss_fn = nn.CrossEntropyLoss()
-exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
-
-train(model, data_loaders, loss_fn, optimizer, exp_lr_scheduler, EPOCHS)
+    train(model, data_loaders, loss_fn, optimizer, exp_lr_scheduler, EPOCHS)

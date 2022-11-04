@@ -138,9 +138,14 @@ class MobileDetTPU(nn.Module):
         self.edge23 = Edge_Residual(input=128, output=int(6*(self.n_class+1)), exp_ratio=1, stride=1)
 
         #classifier
-        #self.conv3 = nn.Conv2d(42, 42, 1, 1, 0, bias=False)
+        self.conv3 = nn.Conv2d(in_channels=384, out_channels=1536, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn3 = nn.BatchNorm2d(1536)
+        self.rl3 = nn.ReLU6(inplace=True)
         #self.flat = nn.Flatten(1, -1)
         #self.fc1 = nn.Linear(22374, classes)
+        self.avgpool = nn.AvgPool2d(kernel_size=(10, 10))
+        self.conv4 = nn.Conv2d(in_channels=1536, out_channels=self.classes, kernel_size=1, stride=1, padding=0, bias=False)
+        self.bn4 = nn.BatchNorm2d(self.classes)
 
     
     def forward(self, x):
@@ -178,18 +183,28 @@ class MobileDetTPU(nn.Module):
         x27 = torch.add(x26, self.inv10(x26))
         x28 = self.inv11(x27)
 
-        x29 = self.inv12(x28)
-        x30 = self.inv13(x29)
-        x31 = self.inv14(x30)
-        x32 = self.inv15(x31)#4M 113-1
+
 
         if self.net_type == "classifier":
+            x29 = self.conv3(x28)
+            x30 = self.bn3(x29)
+            x31 = self.rl3(x30)
 
-            #x = self.conv2(x)
-            x33 = self.flat(x32)
-            x34 = self.fc1(x33)
-            return x34
+            x32 = self.avgpool(x31)
+
+            x33 = self.conv4(x32)
+            x34 = self.bn4(x33)
+
+            x35 = torch.reshape(x34, (x34.size()[0], x34.size()[1]))
+            #x36 = nn.Softmax(x35) # ???
+
+            return x35
+
         if self.net_type == "detector":
+            x29 = self.inv12(x28)
+            x30 = self.inv13(x29)
+            x31 = self.inv14(x30)
+            x32 = self.inv15(x31)#4M 113-1
             
             x33 = self.edge12(x23)
             x34 = torch.reshape(x33, (x33.size()[0],int(x33.size()[1]*x33.size()[2]*x33.size()[3]/4),1,4))
