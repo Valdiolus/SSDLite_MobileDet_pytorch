@@ -14,6 +14,7 @@ import time
 import mobiledet
 
 from torchsummary import summary
+import wandb
 
 # CUDA_VISIBLE_DEVICES="" for CPU run
 
@@ -23,7 +24,25 @@ workers = 4
 EPOCHS = 150
 n_classes = 1000
 input_size = 320
+init_lr = 0.05
+init_momentum = 0.9
+init_weight_decay = 0.00004
+
 PATH_TO_SAVE = './runs'
+
+wandb_log_interval = 10
+wandb_config = {"batch_size": batch_size,
+                "num_workers": workers,
+                "input size": input_size,
+                "epochs": EPOCHS,
+                "pin_memory": False,  
+                "precision": 32,
+                "optimizer": "SGD",
+                "lr": init_lr,
+                "momentum": init_momentum,
+                "weight_decay": init_weight_decay,
+                }
+
 
 def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):  
     #count the current date and time
@@ -38,6 +57,12 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
     #print(model)
 
     best_acc = 0.0
+
+    #wand integration
+    wandb.init(project="Mobiledet backbone", name = time_now, config=wandb_config) # resume
+    if device == torch.device("cuda"):
+        print("Use wandb watch to collect model info")
+        wandb.watch(model, log_freq=wandb_log_interval)
 
     time_beginning = time.time()
     losses = {'train': [], "val": []}
@@ -82,6 +107,8 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
                     loss = loss_fn(outputs, labels)
                     preds = torch.argmax(outputs, 1)
 
+                    iter += 1
+
                     #calculate 
                     if phase == "train":
                         loss.backward()
@@ -91,11 +118,15 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
                         running_corrects += torch.sum(preds == labels.data)
                         processed_data += inputs.size(0)
 
-                        iter += 1
+                        running_accuracy=(running_corrects/(batch_size*iter))
+
+                        if iter % wandb_log_interval == 0:
+                            wandb.log({"train": {"loss": loss.item(), "accuracy": running_accuracy.item()}})
+
                         #if iter % 10 == 0:
                         #    torch.save(model.state_dict(), os.path.join(PATH_TO_SAVE, "tmp.pt"))
                         #    exit(0)
-                        tepoch.set_postfix(loss=loss.item(), accuracy=(running_corrects/(batch_size*iter)).item())
+                        tepoch.set_postfix(loss=loss.item(), accuracy=running_accuracy.item())
                     if phase == "val":
                         iter_top1 = 0
                         iter_top5 = 0
@@ -124,6 +155,7 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
 
             if phase == 'train':
                 scheduler.step()
+                #wandb.log({"train epoch loss": epoch_loss, "train epoch accuracy": epoch_acc})
                 
             if phase == 'val':
                 correct_top1 = correct_top1.item() / processed_data
@@ -132,6 +164,7 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
                 if epoch_acc > best_acc:
                     best_acc = epoch_acc
                     torch.save(model.state_dict(), os.path.join(train_path, "best.pt"))
+                wandb.log({"val": {"loss": loss, "top1 accuracy": correct_top1, "top5 accuracy": correct_top5}})
 
         #Print log each epoch
         print("\nEpoch %s/%s" % (epoch+1, num_epochs), "train acc", "{:.4f}".format(accuracy['train'][epoch]), "train loss", "{:.4f}".format(losses['train'][epoch]), 
@@ -183,7 +216,7 @@ if __name__ == '__main__':
 
     #The optimal learning rate of the MobileNet-V2 model is 1.66 × 10 −3 - ???
     #optimizer = torch.optim.Adam(model.parameters())
-    optimizer = torch.optim.SGD(model.parameters(), 0.05, momentum=0.9, weight_decay=0.00004)
+    optimizer = torch.optim.SGD(model.parameters(), init_lr, momentum=init_momentum, weight_decay=init_weight_decay) # CHANGE WANDB!!!
     loss_fn = nn.CrossEntropyLoss()
     exp_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=int(len(imagenet_data['train'])/batch_size))
 
