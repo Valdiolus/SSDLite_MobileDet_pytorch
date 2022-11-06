@@ -1,3 +1,5 @@
 runs
 data
 trainlog.md
+wandb
+__pycache__
