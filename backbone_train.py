@@ -30,9 +30,8 @@ init_weight_decay = 0.00004
 CenterCrop = 320 # 224? was 298 
 
 load_from_file = 0
-saved_model = '2022-11-6_18-30-23'
+saved_model = '2022-11-6_21-50-46'
 wandb_saved_id = 0
-saved_epochs = 0
 
 PATH_TO_SAVE = './runs'
 
@@ -68,6 +67,7 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
     #print(model)
 
     best_acc = 0.0
+    saved_epochs = 0
 
     #wand integration
     if load_from_file:
@@ -82,16 +82,17 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 10):
             saved_epochs = int(file2.read())
     else:
         wandb_saved_id = wandb.util.generate_id()
-        wandb.init(id=wandb_saved_id, resume="allow", project="Mobiledet backbone", name = time_now, config=wandb_config)
+        wandb.init(id=wandb_saved_id, resume=True, project="Mobiledet backbone", name = time_now, config=wandb_config)
         
         #save id in the same folder
-        with open(os.path.join(train_path, "wandb.txt"), 'w') as f:
-            f.write(wandb_saved_id)
-            f.close()
+        with open(os.path.join(train_path, "wandb.txt"), 'w') as file1:
+            file1.write(wandb_saved_id)
+            file1.close()
         
-        with open(os.path.join(train_path, "hyp.txt"), 'w') as f:
-            f.write(0)
-            f.close()
+        #save epoch init number
+        with open(os.path.join(train_path, "hyp.txt"), 'w') as file2:
+            file2.write('0')
+            file2.close()
         
     print("wandb id:", wandb_saved_id)
 
