@@ -27,12 +27,18 @@ import math
 import cv2
 from prettytable import PrettyTable
 
+#for time correction
+gmt_dst = 2
+
+#use fp16
+mixed_precision=True
+
 # CUDA_VISIBLE_DEVICES="" for CPU run
 
-detector_train_dir = '/Users/valdis/datasets/coco6'
-validation_fo_file = '/Users/valdis/datasets/coco6/val/labels_filtered.json' # same dir - /data with images
+detector_train_dir = '/media/valdis/NVME/datasets/coco6'
+validation_fo_file = '/media/valdis/NVME/datasets/coco6/val/labels_filtered.json' # same dir - /data with images
 DATA_MODES = ['train', 'val']
-batch_size = 32
+batch_size = 256
 workers = 4
 EPOCHS = 100
 n_classes = 6
@@ -40,15 +46,32 @@ CLASSES = ["person", "car", "bicycle", "motorcycle", "bus", "truck"]
 input_size = 320
 PATH_TO_SAVE = './runs'
 
+init_lr = 0.13
+init_momentum = 0.9
+init_weight_decay = 0.00004
+
 anchor_boxes = 0
 varx = 0.1
 vary = 0.1
 varw = 0.2
 varh = 0.2
 
-max_pred_per_image = 5
+max_pred_per_image = 100
 
 SHOW_RESULTS_EACH_EPOCH = 0
+
+#fine-tune controls
+use_pretrain = 0
+use_backbone = 1
+freeze_backbone = 0
+
+backbone_saves = 'backbone_2022-11-16_9-56-38'
+pretrained_saves = ''
+
+
+
+
+
 
 #3090 2.4  it/s 128bs 8 workers coco only fp32
 #3090 2.41 it/s 128bs 4 workers coco only fp32 (+- same, 0.01 better)
@@ -176,7 +199,7 @@ def generate_prediction_boxes(predictions, conf_th=0.5, iou_th=0.5):
 
     #Calculate softmax across all preds, find max class in each prediction, find which predictions have > threshold
     output_conf_full = nn.Softmax(dim=2)(predictions[:,:,4:])
-    output_labels_full = torch.argmax(output_conf_full, 2) # -1 - remove background [0]
+    output_labels_full = torch.argmax(output_conf_full, 2)
     output_conf = torch.argwhere(output_conf_full > conf_th)#[1,1280,3] - number of batch, pred and in class
 
     results = np.zeros((batch_size, max_pred_per_image, 6))
@@ -197,7 +220,7 @@ def generate_prediction_boxes(predictions, conf_th=0.5, iou_th=0.5):
             #conf
             filtered_output[n_pred_per_image][4] = output_conf_full[output_conf[i][0]][output_conf[i][1]][output_labels_full[output_conf[i][0]][output_conf[i][1]]].item()
             #label
-            filtered_output[n_pred_per_image][5] = output_labels_full[output_conf[i][0]][output_conf[i][1]].item()
+            filtered_output[n_pred_per_image][5] = output_labels_full[output_conf[i][0]][output_conf[i][1]].item() - 1 # -1 - remove background [0]
             n_pred_per_image += 1
         
         if no_preds:
@@ -316,7 +339,7 @@ def calculate_map(tp_table):
 def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 1):  
     #count the current date and time
     time_struct = time.gmtime()
-    time_now = str(time_struct.tm_year)+'-'+str(time_struct.tm_mon)+'-'+str(time_struct.tm_mday)+'_'+str(time_struct.tm_hour+3)+'-'+str(time_struct.tm_min)+'-'+str(time_struct.tm_sec)
+    time_now = str(time_struct.tm_year)+'-'+str(time_struct.tm_mon)+'-'+str(time_struct.tm_mday)+'_'+str(time_struct.tm_hour+gmt_dst)+'-'+str(time_struct.tm_min)+'-'+str(time_struct.tm_sec)
     print(time_now)
     train_path = os.path.join(PATH_TO_SAVE, time_now)
     if not os.path.exists(train_path):
@@ -333,7 +356,10 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 1):
     losses_reg = {'train': [], "val": []}
     losses_class = {'train': [], "val": []}
     #log_template = "\nEpoch {ep:03d} train_acc {t_acc:0.4f} val_acc {v_acc:0.4f} train_loss: {t_loss:0.4f} val_loss {v_loss:0.4f}"
-    #pbar = trange(num_epochs, desc="Epoch")
+    
+    if mixed_precision:
+        scaler = torch.cuda.amp.GradScaler()
+
     for epoch in range(num_epochs):
         for phase in ["train", "val"]:
             if phase == 'train':
@@ -357,26 +383,41 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 1):
                         inputs = (inputs/255).to(device)
                         bbox = labels['boxes'].to(device)
                         classes = labels['labels'].to(device)
-                        image_ids = labels['image_id']
+                        #image_ids = labels['image_id']
                         #objs = labels['objs'].to(device)
                     else:
                         inputs = (inputs/255)
-    
-                    if phase == "train":
-                        optimizer.zero_grad()
-
-                    if phase == "train":
-                        outputs = model(inputs) #bboxes[4], classes[7] == 11
+                    
+                    if mixed_precision:
+                        with torch.autocast(device_type='cuda', dtype=torch.float16):
+                            if phase == "train":
+                                outputs = model(inputs) #bboxes[4], classes[7] == 11
+                            else:
+                                with torch.no_grad():
+                                        outputs = model(inputs)  
+                                        
+                            loss, lb, lc = loss_fn(outputs[:,:,4:], outputs[:,:,:4], classes, bbox)
                     else:
-                        with torch.no_grad():
-                                outputs = model(inputs)  
+                        if phase == "train":
+                            outputs = model(inputs) #bboxes[4], classes[7] == 11
+                        else:
+                            with torch.no_grad():
+                                    outputs = model(inputs)  
 
-                    loss, lb, lc = loss_fn(outputs[:,:,4:], outputs[:,:,:4], classes, bbox)
+                        loss, lb, lc = loss_fn(outputs[:,:,4:], outputs[:,:,:4], classes, bbox)
 
                     #calculate 
                     if phase == "train":
-                        loss.backward()
-                        optimizer.step()
+                        optimizer.zero_grad()
+                        if mixed_precision:
+                            scaler.scale(loss).backward()
+                            scaler.step(optimizer)
+                            scaler.update()
+                        else:
+                            loss.backward()
+                            optimizer.step()
+
+                        scheduler.step()
 
                         running_loss += loss.item() * inputs.size(0)
                         running_loss_reg += lb.item() * inputs.size(0)
@@ -385,8 +426,8 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 1):
                         tepoch.set_postfix(loss=loss.item(), loss_reg=lb.item(), loss_class=lc.item())
                     if phase == "val":
                         #validation
-                        val_results = generate_prediction_boxes(outputs, conf_th=0.25, iou_th=0.1)
-                        tp_table = validate_batch(tp_table, labels, val_results, iou_th=0.1)
+                        #val_results = generate_prediction_boxes(outputs, conf_th=0.25, iou_th=0.1)
+                        #tp_table = validate_batch(tp_table, labels, val_results, iou_th=0.1)
 
                         running_loss += loss.item() * inputs.size(0)
                         running_loss_reg += lb.item() * inputs.size(0)
@@ -403,18 +444,18 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 1):
             losses_class[phase].append(epoch_loss_class)
 
             if phase == 'train':
-                scheduler.step()
+                a=1
 
             if phase == 'val':
-                pr_table, calc_AP = calculate_map(tp_table)
+                #pr_table, calc_AP = calculate_map(tp_table)
                 torch.save(model.state_dict(), os.path.join(train_path, "last.pt"))
                 if epoch_loss < best_loss:
                     best_loss = epoch_loss
                     torch.save(model.state_dict(), os.path.join(train_path, "best.pt"))
 
-        #Print log each epoch
-        print("\nEpoch %s/%s" % (epoch+1, num_epochs), "train loss", "{:.3f}".format(losses['train'][epoch]), "train loss bbox", "{:.3f}".format(losses_reg['train'][epoch]), "train loss class", "{:.3f}".format(losses_class['train'][epoch]), 
-                                                       "| val AP", "{:.2f}".format(calc_AP), "val loss", "{:.3f}".format(losses['val'][epoch]), "val loss bbox", "{:.3f}".format(losses_reg['val'][epoch]), "val loss class", "{:.3f}".format(losses_class['val'][epoch]))
+        #Print log each epoch "| val AP", "{:.2f}".format(calc_AP), 
+        print("\nEpoch %s/%s" % (epoch+1, num_epochs), "train loss", "{:.3f}".format(losses['train'][epoch]), "train loss reg", "{:.3f}".format(losses_reg['train'][epoch]), "train loss class", "{:.3f}".format(losses_class['train'][epoch]), 
+                                                       "val loss", "{:.3f}".format(losses['val'][epoch]), "val loss reg", "{:.3f}".format(losses_reg['val'][epoch]), "val loss class", "{:.3f}".format(losses_class['val'][epoch]))
 
     time_elapsed = time.time() - time_beginning
     print('Training complete in {:.0f}h {:.0f}m {:.0f}s'.format(time_elapsed // 3600, time_elapsed // 60, time_elapsed % 60))
@@ -498,7 +539,10 @@ class DetectionDataset(Dataset):
         
         self.images = sorted(images)
 
-        self.len_ = len(self.images)
+        if mode == 'val':
+            self.len_ = len(self.images)
+        else:
+            self.len_ = len(self.images)
         
         labels = list(Path(os.path.join(os.path.join(filepath, mode), 'data_mdet/labels')).rglob('*.txt'))
         #class 0 - background, bbox: Xc,Yc,W,H
@@ -603,25 +647,52 @@ class DetectionDataset(Dataset):
                 #if num_obj >= self.preds:
                 #    break
         #calculate acnhors and gt iou best id
-        #print(len(gt_boxes))
+        #print("gt boxes:", len(gt_boxes))
         #time_beginning = time.time()
         gt_boxes = torch.as_tensor(gt_boxes, dtype=torch.float32)
-        box_idx = torch.argwhere(box_iou(gt_boxes, self.anchor_boxes) > 0.5)
-        #print("time:", time.time() - time_beginning)
+        iou_gt_to_def = box_iou(gt_boxes, self.anchor_boxes) #len_gt * len_def_boxes
 
-        #print("all boxes:", num_obj)
-        for k in range(len(box_idx)):
-            gt_n = box_idx[k][0]
-            anc_n = box_idx[k][1]
-            #print("before:", gt_boxes[gt_n], self.anchor_boxes[anc_n])
-            #out_boxes[k] = gt_boxes[gt_n] - self.anchor_boxes[anc_n]
-            out_boxes[k][0] = ((gt_boxes[gt_n][0] - self.anchor_boxes[anc_n][0])/self.anchor_boxes[anc_n][2])/np.sqrt(self.varx)
-            out_boxes[k][1] = ((gt_boxes[gt_n][1] - self.anchor_boxes[anc_n][1])/self.anchor_boxes[anc_n][3])/np.sqrt(self.vary)
-            out_boxes[k][2] = (torch.log(gt_boxes[gt_n][2]/self.anchor_boxes[anc_n][2]))/np.sqrt(self.varw)
-            out_boxes[k][3] = (torch.log(gt_boxes[gt_n][3]/self.anchor_boxes[anc_n][3]))/np.sqrt(self.varh)
-            #print("after:", out_boxes[k])
+        n_boxes = 0
 
-            out_classes[k] = gt_classes[box_idx[k][0]]
+        for n in range(len(gt_boxes)): # HOW TO WORK WITH "NEUTRAL" BOXES???
+            iou_gt = iou_gt_to_def[n]
+            good_box_idx = torch.argwhere(iou_gt > 0.5)
+            #print("good box ids", n, len(good_box_idx), good_box_idx)
+            #print("train boxes:", len(box_idx))
+            #print("time:", time.time() - time_beginning)
+            if (len(good_box_idx) > 0): # there are > 0.5 iou - get only them (they are best too)
+                #print("good 1:", good_box_idx[0][0])
+                for k in range(len(good_box_idx)):
+                    anc_k = good_box_idx[k][0]
+                    out_boxes[n_boxes][0] = ((gt_boxes[n][0] - self.anchor_boxes[anc_k][0])/self.anchor_boxes[anc_k][2])/np.sqrt(self.varx)
+                    out_boxes[n_boxes][1] = ((gt_boxes[n][1] - self.anchor_boxes[anc_k][1])/self.anchor_boxes[anc_k][3])/np.sqrt(self.vary)
+                    out_boxes[n_boxes][2] = (torch.log(gt_boxes[n][2]/self.anchor_boxes[anc_k][2]))/np.sqrt(self.varw)
+                    out_boxes[n_boxes][3] = (torch.log(gt_boxes[n][3]/self.anchor_boxes[anc_k][3]))/np.sqrt(self.varh)
+
+                    out_classes[n_boxes] = gt_classes[n]
+
+                    n_boxes += 1 
+
+            else: # only <0.5 iou left - get only best    
+                iou_max = torch.max(iou_gt)
+                if iou_max == 0:
+                    continue
+
+                #print("iou max", iou_max)
+                def_gt_max = torch.argwhere(iou_gt == iou_max)
+                #print("where max:", def_gt_max)
+                for k in range(len(def_gt_max)):
+                    anc_k = def_gt_max[k][0]
+                    out_boxes[n_boxes][0] = ((gt_boxes[n][0] - self.anchor_boxes[anc_k][0])/self.anchor_boxes[anc_k][2])/np.sqrt(self.varx)
+                    out_boxes[n_boxes][1] = ((gt_boxes[n][1] - self.anchor_boxes[anc_k][1])/self.anchor_boxes[anc_k][3])/np.sqrt(self.vary)
+                    out_boxes[n_boxes][2] = (torch.log(gt_boxes[n][2]/self.anchor_boxes[anc_k][2]))/np.sqrt(self.varw)
+                    out_boxes[n_boxes][3] = (torch.log(gt_boxes[n][3]/self.anchor_boxes[anc_k][3]))/np.sqrt(self.varh)
+
+                    out_classes[n_boxes] = gt_classes[n]
+
+                    n_boxes += 1
+            
+                    
 
         objs = torch.as_tensor([num_obj], dtype=torch.int64)
         #out_boxes = torch.as_tensor(out_boxes, dtype=torch.float32)
@@ -682,6 +753,9 @@ if __name__ == '__main__':
                     for x in ['train', 'val']}
 
     dataset_sizes = {x: len(dataset[x]) for x in ['train', 'val']}
+
+    iter_per_epoch = int(len(dataset['train'])/batch_size)
+
     print(dataset_sizes)
 
     model = mobiledet.MobileDetTPU(net_type="detector", classes=n_classes)
@@ -690,10 +764,42 @@ if __name__ == '__main__':
     #model.classifier = nn.Linear(1280, n_classes)
 
     #summary(model.to(device), (3, input_size, input_size))
-    #print(model)
 
-    optimizer = torch.optim.Adam(model.parameters())
+    if use_pretrain:
+        model.load_state_dict(torch.load(os.path.join(os.path.join(PATH_TO_SAVE, pretrained_saves), "last.pt")))
+        print("Pretrained SSD model is loaded")
+
+    if use_backbone:
+        ssd_dict = model.state_dict()
+
+        backbone_model = mobiledet.MobileDetTPU(net_type="classifier", classes=1000)
+        backbone_model.load_state_dict(torch.load(os.path.join(os.path.join(PATH_TO_SAVE, backbone_saves), "last.pt"), map_location=torch.device('cpu')))
+        backbone_dict = backbone_model.state_dict()
+
+        for k, v in backbone_dict.items():
+            if 'inv12' in k:
+                break
+            ssd_dict.update({k: v})
+        model.load_state_dict(ssd_dict)
+        print("Pretrained backbone is loaded")
+    
+    if freeze_backbone:
+        for name, param in model.named_parameters():
+            if 'inv12' in name:
+                freeze_backbone = 0
+            
+            if freeze_backbone:
+                param.requires_grad = False
+            else:
+                param.requires_grad = True
+            #print(name, 0 if param.requires_grad == False else 1)
+        print("Backbone is freezed")
+
+
+    #optimizer = torch.optim.Adam(model.parameters())
+    optimizer = torch.optim.SGD(model.parameters(), init_lr, momentum=init_momentum, weight_decay=init_weight_decay)
     loss_fn = MultiboxLoss(iou_threshold=0.5, neg_pos_ratio=3, center_variance=0.1, size_variance=0.2, device=device)
-    exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+    exp_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=int(EPOCHS*iter_per_epoch))#
+
 
     train(model, data_loaders, loss_fn, optimizer, exp_lr_scheduler, EPOCHS)

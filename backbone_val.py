@@ -15,12 +15,12 @@ import mobiledet
 
 from torchsummary import summary
 
-batch_size = 128
+batch_size = 256
 workers = 4
 EPOCHS = 1
 n_classes = 1000
 input_size = 320
-MODEL_PATH = './runs/2022-9-30_7-17-25/last.pt'
+MODEL_PATH = './runs/backbone_2022-11-16_9-56-38/best_top1.pt'
 
 def val(model, dataloaders):
     model.to(device) 
@@ -83,7 +83,7 @@ if __name__ == '__main__':
         print('CUDA is available!  Training on GPU ...')
         train_on_gpu = True
         device = torch.device("cuda")
-        with open("cuda_datapath.txt", 'r') as f:
+        with open("cuda_datapath_imagenet.txt", 'r') as f:
             imagenet_dir = f.read()
             print("cuda imagenet path:", imagenet_dir)
     else:
@@ -91,18 +91,19 @@ if __name__ == '__main__':
             print('GPU on M1 MAC is available!  Training on GPU ...')
             train_on_gpu = True
             device = torch.device("mps")
-            with open("mps_datapath.txt", 'r') as f:
+            with open("mps_datapath_imagenet.txt", 'r') as f:
                 imagenet_dir = f.read()
                 print("mps imagenet path:", imagenet_dir)
         else:
             print('CUDA and MPS are not available.  Training on CPU ...')
-            with open("cuda_datapath.txt", 'r') as f:
+            with open("cuda_datapath_imagenet.txt", 'r') as f:
                 imagenet_dir = f.read()
                 print("cuda imagenet path:", imagenet_dir)
 
     #Loading dataset - like Imagenet, where 1k folders with each classes
     data_transforms = transforms.Compose([
-        transforms.Resize((input_size,input_size)),
+        transforms.Resize((input_size, input_size)),
+        transforms.CenterCrop(320),
         transforms.ToTensor()
         ])
     imagenet_data = {x: torchvision.datasets.ImageFolder(os.path.join(imagenet_dir, x), transform=data_transforms)
