@@ -20,7 +20,7 @@ workers = 4
 EPOCHS = 1
 n_classes = 1000
 input_size = 320
-MODEL_PATH = './runs/backbone_2022-11-16_9-56-38/best_top1.pt'
+MODEL_PATH = './runs/backbone_2022-12-7_21-3-22/best_top1.pt'
 
 def val(model, dataloaders):
     model.to(device) 

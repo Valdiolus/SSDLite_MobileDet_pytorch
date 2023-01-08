@@ -19,10 +19,11 @@ import os
 #tf_115
 #netron -b runs/tflite/best.tflite -p 6009 --host 192.168.0.235
 
-MODEL_FILE = "tmp"
+MODEL_BEST = "/last.pt"
+MODEL_FILE = "2022-12-18_8-26-28"
 TFLITE_FOLDER = "./runs/tflite/"
 
-MODEL_PATH = "./runs/" + MODEL_FILE + ".pt"
+MODEL_PATH = "./runs/" + MODEL_FILE + MODEL_BEST
 ONNX_PATH = "./runs/tflite/" + MODEL_FILE + ".onnx"
 ONNX_OPT_PATH = "./runs/tflite/" + MODEL_FILE + "_opt.onnx"
 MO_PATH = "./runs/tflite/" + MODEL_FILE + "_opt"
@@ -38,8 +39,8 @@ width = 320
 int8 = True
 nms=False
 
-classifier = 1
-detector = 0
+classifier = 0
+detector = 1
 
 
 def export_onnx_saved_model_tflite_old():
@@ -132,13 +133,13 @@ def representative_data_gen():
 def export_onnx_opt_openvino_tflite():
    #model = torchvision.models.mobilenet_v2(weights=torchvision.models.MobileNet_V2_Weights.IMAGENET1K_V2)
 
-    #model = torchvision.models.detection.ssdlite320_mobilenet_v3_large(weights=torchvision.models.detection.ssdlite.SSDLite320_MobileNet_V3_Large_Weights)
+    model = torchvision.models.detection.ssdlite320_mobilenet_v3_large(weights=torchvision.models.detection.ssdlite.SSDLite320_MobileNet_V3_Large_Weights)
 
     #model = torchvision.models.mobilenet_v3_small(weights=torchvision.models.MobileNet_V3_Small_Weights.IMAGENET1K_V1)
 
     #model = torchvision.models.mobilenet_v3_large(weights=torchvision.models.MobileNet_V3_Large_Weights.IMAGENET1K_V2)
 
-    model = mobiledet.MobileDetTPU("detector", 6)
+    #model = mobiledet.MobileDetTPU("detector", 6)
     #model.load_state_dict(torch.load(MODEL_PATH))
     #print(model)
 

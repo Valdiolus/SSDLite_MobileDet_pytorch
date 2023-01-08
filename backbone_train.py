@@ -21,14 +21,14 @@ import argparse
 # CUDA_VISIBLE_DEVICES="" for CPU run
 
 #use fp16
-mixed_precision=False
+mixed_precision=True
 
 #for time correction
 gmt_dst = 2
 
-batch_size = 128
-workers = 4
-EPOCHS = 150
+batch_size = 256 if mixed_precision else 128
+workers = 8
+EPOCHS = 250
 n_classes = 1000
 input_size = 320
 resize = int(input_size/0.875)
@@ -43,7 +43,7 @@ wandb_saved_id = 0
 
 PATH_TO_SAVE = './runs'
 
-wandb_log_interval = 10
+wandb_log_interval = 5 if mixed_precision else 10
 wandb_config = {"batch_size": batch_size,
                 "num_workers": workers,
                 "input size": input_size,
@@ -293,11 +293,12 @@ if __name__ == '__main__':
     data_transforms_train = transforms.Compose([
         transforms.RandomResizedCrop(input_size),
         transforms.RandomHorizontalFlip(),
+        #transforms.RandomRotation(20),
         transforms.ToTensor(),
         ])
     data_transforms_val = transforms.Compose([
         transforms.Resize((resize)),
-        transforms.CenterCrop(CenterCrop),
+        transforms.CenterCrop(input_size),
         transforms.ToTensor(),
         ])
     imagenet_data = {x: torchvision.datasets.ImageFolder(os.path.join(imagenet_dir, x), transform=data_transforms_train if x=='train' else data_transforms_val)

@@ -39,7 +39,7 @@ detector_train_dir = '/media/valdis/NVME/datasets/coco6'
 validation_fo_file = '/media/valdis/NVME/datasets/coco6/val/labels_filtered.json' # same dir - /data with images
 DATA_MODES = ['train', 'val']
 batch_size = 256
-workers = 4
+workers = 8
 EPOCHS = 100
 n_classes = 6
 CLASSES = ["person", "car", "bicycle", "motorcycle", "bus", "truck"]
@@ -56,7 +56,7 @@ vary = 0.1
 varw = 0.2
 varh = 0.2
 
-max_pred_per_image = 100
+max_pred_per_image = 10
 
 SHOW_RESULTS_EACH_EPOCH = 0
 
@@ -65,7 +65,7 @@ use_pretrain = 0
 use_backbone = 1
 freeze_backbone = 0
 
-backbone_saves = 'backbone_2022-11-16_9-56-38'
+backbone_saves = 'backbone_2022-12-7_21-3-22'
 pretrained_saves = ''
 
 
@@ -121,7 +121,7 @@ def box_iou_nms(boxes1, boxes2):
     union_areas = areas1 + areas2 - inter_areas
     return inter_areas / union_areas
 
-def generate_anchor_boxes(MinScale=.2, MaxScale=0.95, asp=[1.0, 2.0, 0.5, 3.0, 0.33, 0.66]):
+def generate_anchor_boxes(MinScale=0.2, MaxScale=0.95, asp=[1.0, 2.0, 0.5, 3.0, 0.33, 0.66]):
 
     #ssd mnet example - numBoxes=[4,6,6,6,4,4], layerWidth=[28,14,7,4,2,1], k = 10+1+4):
 
@@ -204,6 +204,8 @@ def generate_prediction_boxes(predictions, conf_th=0.5, iou_th=0.5):
 
     results = np.zeros((batch_size, max_pred_per_image, 6))
     #decode bboxes 
+    n_preds_conf = 0
+    n_pred_nms = 0
     for b in range(batch_size):
         filtered_output = torch.zeros((2034, 6)) # max predictions per image + image ID
         n_pred_per_image = 0
@@ -211,21 +213,28 @@ def generate_prediction_boxes(predictions, conf_th=0.5, iou_th=0.5):
         for i in range(output_conf.shape[0]):
             if output_conf[i][0] != b:
                 continue
+            
+            pred_label = output_labels_full[output_conf[i][0]][output_conf[i][1]].item()
+            if pred_label == 0:
+                continue
             no_preds = False
-            #REMOVE 0 LABELS???
+
+            #label
+            filtered_output[n_pred_per_image][5] = pred_label - 1 # -1 - remove background [0]
+            #bbox
             filtered_output[n_pred_per_image][0] = predictions[output_conf[i][0]][output_conf[i][1]][0].item() * varx * anchor_boxes[output_conf[i][1]][2] + anchor_boxes[output_conf[i][1]][0]
             filtered_output[n_pred_per_image][1] = predictions[output_conf[i][0]][output_conf[i][1]][1].item() * vary * anchor_boxes[output_conf[i][1]][3] + anchor_boxes[output_conf[i][1]][1]
             filtered_output[n_pred_per_image][2] = np.exp(predictions[output_conf[i][0]][output_conf[i][1]][2].item() * varw) * anchor_boxes[output_conf[i][1]][2]
             filtered_output[n_pred_per_image][3] = np.exp(predictions[output_conf[i][0]][output_conf[i][1]][3].item() * varh) * anchor_boxes[output_conf[i][1]][3]
             #conf
             filtered_output[n_pred_per_image][4] = output_conf_full[output_conf[i][0]][output_conf[i][1]][output_labels_full[output_conf[i][0]][output_conf[i][1]]].item()
-            #label
-            filtered_output[n_pred_per_image][5] = output_labels_full[output_conf[i][0]][output_conf[i][1]].item() - 1 # -1 - remove background [0]
+
             n_pred_per_image += 1
         
         if no_preds:
             continue
         
+        n_preds_conf += n_pred_per_image
         #apply NMS and filter only best predictions across each 
         nms_boxes = []
         for i in range(n_pred_per_image):
@@ -238,15 +247,16 @@ def generate_prediction_boxes(predictions, conf_th=0.5, iou_th=0.5):
                 if filtered_output[j][5] != filtered_output[i][5]:
                     continue
                 #apply iou
-                iou = box_iou_nms(filtered_output[i][:4], filtered_output[j][:4])
-                if iou > iou_th:
-                    if filtered_output[j][4] > filtered_output[i][4]:
+                #iou = box_iou_nms(filtered_output[i][:4], filtered_output[j][:4])
+                if True:#iou > iou_th:
+                    if True:#filtered_output[j][4] > filtered_output[i][4]:
                         not_save = True
 
             if not not_save:
                 #filtered_output[i][6] = image_ids[b].item()
                 nms_boxes.append([filtered_output[i][x] for x in range(6)])
-
+        
+        n_pred_nms += len(nms_boxes) #to count
         #find only top k results on the image
         nms_boxes = np.array(nms_boxes)
         topk = np.argsort(nms_boxes[:,4], axis=-1)
@@ -256,6 +266,7 @@ def generate_prediction_boxes(predictions, conf_th=0.5, iou_th=0.5):
         results[b][:nms_boxes[topk].shape[0]] = nms_boxes[topk]
     
     #print("post process duration:", time.time() - time_b)
+    print("res:", n_preds_conf, n_pred_nms)
     return results
 
 def validate_batch(tp_table, labels, results, iou_th=0.5):
@@ -349,6 +360,7 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 1):
     #print(model)
 
     best_loss = 100.0
+    val_AP = 0.0
     priors = 1
 
     time_beginning = time.time()
@@ -426,8 +438,8 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 1):
                         tepoch.set_postfix(loss=loss.item(), loss_reg=lb.item(), loss_class=lc.item())
                     if phase == "val":
                         #validation
-                        #val_results = generate_prediction_boxes(outputs, conf_th=0.25, iou_th=0.1)
-                        #tp_table = validate_batch(tp_table, labels, val_results, iou_th=0.1)
+                        val_results = generate_prediction_boxes(outputs, conf_th=0.3, iou_th=0.5)
+                        tp_table = validate_batch(tp_table, labels, val_results, iou_th=0.5)
 
                         running_loss += loss.item() * inputs.size(0)
                         running_loss_reg += lb.item() * inputs.size(0)
@@ -447,15 +459,15 @@ def train(model, dataloaders, loss_fn, optimizer, scheduler, num_epochs = 1):
                 a=1
 
             if phase == 'val':
-                #pr_table, calc_AP = calculate_map(tp_table)
+                pr_table, val_AP = calculate_map(tp_table)
                 torch.save(model.state_dict(), os.path.join(train_path, "last.pt"))
                 if epoch_loss < best_loss:
                     best_loss = epoch_loss
                     torch.save(model.state_dict(), os.path.join(train_path, "best.pt"))
 
         #Print log each epoch "| val AP", "{:.2f}".format(calc_AP), 
-        print("\nEpoch %s/%s" % (epoch+1, num_epochs), "train loss", "{:.3f}".format(losses['train'][epoch]), "train loss reg", "{:.3f}".format(losses_reg['train'][epoch]), "train loss class", "{:.3f}".format(losses_class['train'][epoch]), 
-                                                       "val loss", "{:.3f}".format(losses['val'][epoch]), "val loss reg", "{:.3f}".format(losses_reg['val'][epoch]), "val loss class", "{:.3f}".format(losses_class['val'][epoch]))
+        print("\nEpoch %s/%s" % (epoch+1, num_epochs), "t_loss:", "{:.3f}".format(losses['train'][epoch]), "t_loss_r:", "{:.3f}".format(losses_reg['train'][epoch]), "t_loss_c:", "{:.3f}".format(losses_class['train'][epoch]), 
+                                                       "v_loss:", "{:.3f}".format(losses['val'][epoch]), "v_loss_r:", "{:.3f}".format(losses_reg['val'][epoch]), "v_loss_c:", "{:.3f}".format(losses_class['val'][epoch]), "| val_AP:", "{:.2f}".format(val_AP))
 
     time_elapsed = time.time() - time_beginning
     print('Training complete in {:.0f}h {:.0f}m {:.0f}s'.format(time_elapsed // 3600, time_elapsed // 60, time_elapsed % 60))
@@ -636,7 +648,7 @@ class DetectionDataset(Dataset):
 
                 #for training
                 gt_boxes.append(box)
-                gt_classes.append(int(arr[0])+1)
+                gt_classes.append(int(arr[0])+1)# +1 - add background class 0
 
                 #for validation
                 out_gt[num_obj][0:4] = torch.as_tensor(box)
@@ -652,26 +664,41 @@ class DetectionDataset(Dataset):
         gt_boxes = torch.as_tensor(gt_boxes, dtype=torch.float32)
         iou_gt_to_def = box_iou(gt_boxes, self.anchor_boxes) #len_gt * len_def_boxes
 
-        n_boxes = 0
+        #skip if using the same anchor box for different gt boxes
+        arch_boxes_used = []
+
+        #out_boxes = self.anchor_boxes
+        #out_boxes[:][0] = ((gt_boxes[n][0] - self.anchor_boxes[anc_k][0])/self.anchor_boxes[anc_k][2])/np.sqrt(self.varx)
+        #out_boxes[:][1] = ((gt_boxes[n][1] - self.anchor_boxes[anc_k][1])/self.anchor_boxes[anc_k][3])/np.sqrt(self.vary)
+        #out_boxes[:][2] = (torch.log(gt_boxes[n][2]/self.anchor_boxes[anc_k][2]))/np.sqrt(self.varw)
+        #out_boxes[:][3] = (torch.log(gt_boxes[n][3]/self.anchor_boxes[anc_k][3]))/np.sqrt(self.varh)
+        sX = np.sqrt(self.varx)
+        sY = np.sqrt(self.vary)
+        sW = np.sqrt(self.varw)
+        sH = np.sqrt(self.varh)
 
         for n in range(len(gt_boxes)): # HOW TO WORK WITH "NEUTRAL" BOXES???
+
             iou_gt = iou_gt_to_def[n]
             good_box_idx = torch.argwhere(iou_gt > 0.5)
-            #print("good box ids", n, len(good_box_idx), good_box_idx)
+            #print("good box ids", n, len(iou_gt))#, good_box_idx)
             #print("train boxes:", len(box_idx))
             #print("time:", time.time() - time_beginning)
             if (len(good_box_idx) > 0): # there are > 0.5 iou - get only them (they are best too)
                 #print("good 1:", good_box_idx[0][0])
                 for k in range(len(good_box_idx)):
                     anc_k = good_box_idx[k][0]
-                    out_boxes[n_boxes][0] = ((gt_boxes[n][0] - self.anchor_boxes[anc_k][0])/self.anchor_boxes[anc_k][2])/np.sqrt(self.varx)
-                    out_boxes[n_boxes][1] = ((gt_boxes[n][1] - self.anchor_boxes[anc_k][1])/self.anchor_boxes[anc_k][3])/np.sqrt(self.vary)
-                    out_boxes[n_boxes][2] = (torch.log(gt_boxes[n][2]/self.anchor_boxes[anc_k][2]))/np.sqrt(self.varw)
-                    out_boxes[n_boxes][3] = (torch.log(gt_boxes[n][3]/self.anchor_boxes[anc_k][3]))/np.sqrt(self.varh)
+                    if anc_k in arch_boxes_used:
+                        #print("Don't use the same anc bboxes")
+                        continue
+                    out_boxes[anc_k][0] = ((gt_boxes[n][0] - self.anchor_boxes[anc_k][0])/self.anchor_boxes[anc_k][2])/sX
+                    out_boxes[anc_k][1] = ((gt_boxes[n][1] - self.anchor_boxes[anc_k][1])/self.anchor_boxes[anc_k][3])/sY
+                    out_boxes[anc_k][2] = (torch.log(gt_boxes[n][2]/self.anchor_boxes[anc_k][2]))/sW
+                    out_boxes[anc_k][3] = (torch.log(gt_boxes[n][3]/self.anchor_boxes[anc_k][3]))/sH
 
-                    out_classes[n_boxes] = gt_classes[n]
+                    out_classes[anc_k] = gt_classes[n]
 
-                    n_boxes += 1 
+                    arch_boxes_used.append(anc_k)
 
             else: # only <0.5 iou left - get only best    
                 iou_max = torch.max(iou_gt)
@@ -683,14 +710,33 @@ class DetectionDataset(Dataset):
                 #print("where max:", def_gt_max)
                 for k in range(len(def_gt_max)):
                     anc_k = def_gt_max[k][0]
-                    out_boxes[n_boxes][0] = ((gt_boxes[n][0] - self.anchor_boxes[anc_k][0])/self.anchor_boxes[anc_k][2])/np.sqrt(self.varx)
-                    out_boxes[n_boxes][1] = ((gt_boxes[n][1] - self.anchor_boxes[anc_k][1])/self.anchor_boxes[anc_k][3])/np.sqrt(self.vary)
-                    out_boxes[n_boxes][2] = (torch.log(gt_boxes[n][2]/self.anchor_boxes[anc_k][2]))/np.sqrt(self.varw)
-                    out_boxes[n_boxes][3] = (torch.log(gt_boxes[n][3]/self.anchor_boxes[anc_k][3]))/np.sqrt(self.varh)
+                    if anc_k in arch_boxes_used:
+                        #print("Don't use the same anc bboxes")
+                        continue
+                    out_boxes[anc_k][0] = ((gt_boxes[n][0] - self.anchor_boxes[anc_k][0])/self.anchor_boxes[anc_k][2])/sX
+                    out_boxes[anc_k][1] = ((gt_boxes[n][1] - self.anchor_boxes[anc_k][1])/self.anchor_boxes[anc_k][3])/sY
+                    out_boxes[anc_k][2] = (torch.log(gt_boxes[n][2]/self.anchor_boxes[anc_k][2]))/sW
+                    out_boxes[anc_k][3] = (torch.log(gt_boxes[n][3]/self.anchor_boxes[anc_k][3]))/sH
 
-                    out_classes[n_boxes] = gt_classes[n]
+                    out_classes[anc_k] = gt_classes[n]
 
-                    n_boxes += 1
+                    arch_boxes_used.append(anc_k)
+                
+            def_gt_neg = torch.argwhere(iou_gt > 0.3)
+            for k in range(len(def_gt_neg)):
+                anc_k = def_gt_neg[k][0]
+                if anc_k in arch_boxes_used:
+                    #print("Don't use the same anc bboxes")
+                    continue
+                out_boxes[anc_k][0] = ((gt_boxes[n][0] - self.anchor_boxes[anc_k][0])/self.anchor_boxes[anc_k][2])/sX
+                out_boxes[anc_k][1] = ((gt_boxes[n][1] - self.anchor_boxes[anc_k][1])/self.anchor_boxes[anc_k][3])/sY
+                out_boxes[anc_k][2] = (torch.log(gt_boxes[n][2]/self.anchor_boxes[anc_k][2]))/sW
+                out_boxes[anc_k][3] = (torch.log(gt_boxes[n][3]/self.anchor_boxes[anc_k][3]))/sH
+                
+                #negative - only 0 class
+                #out_classes[anc_k] = gt_classes[n]
+
+                arch_boxes_used.append(anc_k)
             
                     
 
@@ -766,14 +812,14 @@ if __name__ == '__main__':
     #summary(model.to(device), (3, input_size, input_size))
 
     if use_pretrain:
-        model.load_state_dict(torch.load(os.path.join(os.path.join(PATH_TO_SAVE, pretrained_saves), "last.pt")))
+        model.load_state_dict(torch.load(os.path.join(os.path.join(PATH_TO_SAVE, pretrained_saves), "best_top1.pt")))
         print("Pretrained SSD model is loaded")
 
     if use_backbone:
         ssd_dict = model.state_dict()
 
         backbone_model = mobiledet.MobileDetTPU(net_type="classifier", classes=1000)
-        backbone_model.load_state_dict(torch.load(os.path.join(os.path.join(PATH_TO_SAVE, backbone_saves), "last.pt"), map_location=torch.device('cpu')))
+        backbone_model.load_state_dict(torch.load(os.path.join(os.path.join(PATH_TO_SAVE, backbone_saves), "best_top1.pt"), map_location=torch.device('cpu')))
         backbone_dict = backbone_model.state_dict()
 
         for k, v in backbone_dict.items():
@@ -798,7 +844,7 @@ if __name__ == '__main__':
 
     #optimizer = torch.optim.Adam(model.parameters())
     optimizer = torch.optim.SGD(model.parameters(), init_lr, momentum=init_momentum, weight_decay=init_weight_decay)
-    loss_fn = MultiboxLoss(iou_threshold=0.5, neg_pos_ratio=3, center_variance=0.1, size_variance=0.2, device=device)
+    loss_fn = MultiboxLoss(iou_threshold=0.5, neg_pos_ratio=3, center_variance=varx, size_variance=varw, device=device)
     exp_lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=int(EPOCHS*iter_per_epoch))#
 
 
